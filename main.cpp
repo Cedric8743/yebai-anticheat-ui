@@ -130,15 +130,13 @@ static int DelFolder() {
 // ====== 锁住文件夹权限 =======
 static int LockFolder() {
     WCHAR cmd[1024];
-    // 先给自己（当前用户）完全控制权限，防止把自己也锁在外面
-    wsprintfW(cmd, L"icacls \"C:\\Program Files\\AntiCheatExpert\" /T /grant:r Administrators:(F) 2>nul");
+    AddLog(L"[Lock] step1: grant admin...");
+    wsprintfW(cmd, L"icacls \"C:\\Program Files\\AntiCheatExpert\" /T /grant:r Administrators:(F)");
     RunCmd(cmd, 10000);
-    // 禁用继承，移除所有继承的权限
-    wsprintfW(cmd, L"icacls \"C:\\Program Files\\AntiCheatExpert\" /T /inheritance:r 2>nul");
+    AddLog(L"[Lock] step2: deny all...");
+    wsprintfW(cmd, L"icacls \"C:\\Program Files\\AntiCheatExpert\" /T /inheritance:r /deny Everyone:(F)");
     RunCmd(cmd, 10000);
-    // 拒绝所有用户的完全控制（包括系统账户），这样ACE服务也无法访问）
-    wsprintfW(cmd, L"icacls \"C:\\Program Files\\AntiCheatExpert\" /T /deny Everyone:(F) 2>nul");
-    RunCmd(cmd, 10000);
+    AddLog(L"[Lock] done");
     return 0;
 }
 
