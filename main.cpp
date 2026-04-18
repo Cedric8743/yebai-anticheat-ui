@@ -318,7 +318,12 @@ static unsigned __stdcall MonThrd(void* a){
     }
     if(!g_Running){AddLog(L"【2/6】用户取消");_endthreadex(0);return 0;}
     AddLog(L"【3/6】等待辅助加载中...");Sleep(5000);
-    AddLog(L"【4/6】正在识别检测进程...");LockACE();
+    AddLog(L"【4/6】正在锁定ACE文件夹...");
+    if(LockACE() == 0){
+        AddLog(L"【4/6】开启成功!");
+    } else {
+        AddLog(L"【4/6】开启失败!");
+    }
     AddLog(L"【5/6】监控游戏中......");
     while(g_Running){
         if(!IsRunning(GAME_PROC)){
