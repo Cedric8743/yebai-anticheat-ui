@@ -229,12 +229,19 @@ static void StartMon() {
 static void StopMon() {
     if (g_Running) {
         InterlockedExchange(&g_Running, 0);
-        if (g_hMonThread) {
-            WaitForSingleObject(g_hMonThread, 15000);
-            CloseHandle(g_hMonThread);
-            g_hMonThread = NULL;
-        }
     }
+}
+
+// ====== 清理线程（后台执行，避免卡死）=======
+static unsigned __stdcall CleanupThrd(void* a) {
+    (void)a;
+    Sleep(300);
+    UnlockFolder();
+    DelFolder();
+    KillGame();
+    Sleep(300);
+    PostQuitMessage(0);
+    return 0;
 }
 
 // ====== 主窗口 ======
@@ -270,24 +277,15 @@ static LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 StartMon();
                 SetWindowTextW(g_hBtnStart, L"停止过检测");
             } else {
-                AddLog(L"正在停止...");
-                StopMon();  // 先等监控线程完全结束
-                AddLog(L"正在清理...");
-                UnlockFolder();
-                DelFolder();
-                KillGame();
+                StopMon();  // 先停止监控线程
                 SetWindowTextW(g_hBtnStart, L"开始过检测");
+                // 在后台线程执行清理
+                CloseHandle((HANDLE)_beginthreadex(NULL, 0, CleanupThrd, NULL, 0, NULL));
             }
         }
         if (LOWORD(wp) == 21) {  // 退出程序
-            AddLog(L"正在停止...");
-            if (g_Running) StopMon();
-            AddLog(L"正在清理...");
-            UnlockFolder();
-            DelFolder();
-            KillGame();
-            Sleep(200);
-            DestroyWindow(hwnd);
+            StopMon();
+            CloseHandle((HANDLE)_beginthreadex(NULL, 0, CleanupThrd, NULL, 0, NULL));
         }
     }
     if (msg == WM_CLOSE) {
