@@ -128,14 +128,17 @@ static int DelFolder() {
 }
 
 // ====== 锁住文件夹权限 =======
-// 效果等同于手动：右键属性->安全->高级->禁用继承->删除所有用户->只保留所有者
 static int LockFolder() {
-    WCHAR cmd[2048];
-    // icacls "C:\Program Files\AntiCheatExpert" /inheritance:r /deny Everyone:(F)
-    const WCHAR* folder = ACE_FOLDER;
-    // Use the actual path directly in the command
-    wsprintfW(cmd, L"icacls \"C:\\Program Files\\AntiCheatExpert\" /inheritance:r /deny Everyone:(F) /T");
-    RunCmd(cmd, 15000);
+    WCHAR cmd[1024];
+    // 先给自己（当前用户）完全控制权限，防止把自己也锁在外面
+    wsprintfW(cmd, L"icacls \"C:\\Program Files\\AntiCheatExpert\" /T /grant:r Administrators:(F) 2>nul");
+    RunCmd(cmd, 10000);
+    // 禁用继承，移除所有继承的权限
+    wsprintfW(cmd, L"icacls \"C:\\Program Files\\AntiCheatExpert\" /T /inheritance:r 2>nul");
+    RunCmd(cmd, 10000);
+    // 拒绝所有用户的完全控制（包括系统账户），这样ACE服务也无法访问）
+    wsprintfW(cmd, L"icacls \"C:\\Program Files\\AntiCheatExpert\" /T /deny Everyone:(F) 2>nul");
+    RunCmd(cmd, 10000);
     return 0;
 }
 
@@ -224,7 +227,14 @@ static void StartMon() {
 }
 
 static void StopMon() {
-    if (g_Running) InterlockedExchange(&g_Running, 0);
+    if (g_Running) {
+        InterlockedExchange(&g_Running, 0);
+        if (g_hMonThread) {
+            WaitForSingleObject(g_hMonThread, 15000);
+            CloseHandle(g_hMonThread);
+            g_hMonThread = NULL;
+        }
+    }
 }
 
 // ====== 主窗口 ======
@@ -260,20 +270,22 @@ static LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 StartMon();
                 SetWindowTextW(g_hBtnStart, L"停止过检测");
             } else {
+                AddLog(L"正在停止...");
+                StopMon();  // 先等监控线程完全结束
                 AddLog(L"正在清理...");
                 UnlockFolder();
                 DelFolder();
                 KillGame();
-                StopMon();
                 SetWindowTextW(g_hBtnStart, L"开始过检测");
             }
         }
         if (LOWORD(wp) == 21) {  // 退出程序
+            AddLog(L"正在停止...");
+            if (g_Running) StopMon();
             AddLog(L"正在清理...");
             UnlockFolder();
             DelFolder();
             KillGame();
-            if (g_Running) StopMon();
             Sleep(200);
             DestroyWindow(hwnd);
         }
