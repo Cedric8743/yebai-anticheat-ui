@@ -115,7 +115,7 @@ static void MD5_Init(MD5_CTX* c){c->s[0]=0x67452301;c->s[1]=0xefcdab89;c->s[2]=0
 static void MD5_Up(MD5_CTX* c,const void*d,unsigned long len);
 static void MD5_Fin(unsigned char* o,MD5_CTX* c);
 static void MD5_Tr(unsigned long s[4],const unsigned char b[64]);
-static const unsigned char PAD[64]={0x80,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
+static const unsigned char PAD[64]={0x80,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
 static void MD5_Up(MD5_CTX* c,const void* data,unsigned long len){
     unsigned long i,index,partLen; const unsigned char* input=(const unsigned char*)data;
     index=(unsigned long)((c->c[0]>>3)&0x3F);
