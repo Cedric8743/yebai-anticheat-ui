@@ -337,7 +337,7 @@ static void StartMon(){
     if(!g_hMonThread){AddLog(L"[!] 线程启动失败");InterlockedExchange(&g_Running,0);}
 }
 static void StopMon(){
-    if(g_Running){InterlockedExchange(&g_Running,0);AddLog(L"正在停止......");}
+    if(g_Running){InterlockedExchange(&g_Running,0);}
 }
 
 // 登录验证已移除
@@ -375,11 +375,17 @@ static LRESULT CALLBACK MainProc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){
     if(msg==WM_COMMAND){
         if(LOWORD(wp)==20){
             if(!g_Running){StartMon();SetWindowTextW(g_hBtnStart,L"停止过检测");}
-            else{StopMon();SetWindowTextW(g_hBtnStart,L"开始过检测");}
+            else{
+                AddLog(L"正在清理...");
+                UnlockACE();
+                DelFolderW(ACE_FOLDER);
+                KillGame();
+                if(g_Running)StopMon();
+                SetWindowTextW(g_hBtnStart,L"开始过检测");
+            }
         }
         if(LOWORD(wp)==21){
-            // 退出时也要解锁+清理+杀进程
-            Log("用户点击退出，正在清理...");
+            AddLog(L"正在清理...");
             UnlockACE();
             DelFolderW(ACE_FOLDER);
             KillGame();
@@ -389,7 +395,7 @@ static LRESULT CALLBACK MainProc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){
         }
     }
     if(msg==WM_CLOSE){
-        Log("用户关闭窗口，正在清理...");
+        AddLog(L"正在清理...");
         UnlockACE();
         DelFolderW(ACE_FOLDER);
         KillGame();
