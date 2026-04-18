@@ -306,25 +306,6 @@ static void InputBoxW(WCHAR* buf, int bufsize) {
 // ====== 监控线程 ======
 static unsigned __stdcall MonThrd(void* a) {
     (void)a;
-    AddLog(L"[微验] 请输入卡密...");
-    WCHAR kamiBuf[256] = {0};
-    if (MessageBoxW(NULL, L"请在下方输入卡密", L"夜白过检测 - 卡密验证", MB_OKCANCEL | MB_ICONQUESTION) != IDOK) {
-        AddLog(L"[微验] 用户取消");
-        InterlockedExchange(&g_Running, 0);
-        if (g_hBtnStart) { EnableWindow(g_hBtnStart, 1); SetWindowTextW(g_hBtnStart, L"开始过检测"); }
-        _endthreadex(0); return 0;
-    }
-    // Simple input via prompt
-    InputBoxW(kamiBuf, 255);
-    char kamiA[256]; WideCharToMultiByte(CP_ACP, 0, kamiBuf, -1, kamiA, sizeof(kamiA), NULL, NULL);
-    if (WyLogin(kamiA) != 0) {
-        MessageBoxW(NULL, L"微验登录失败", L"错误", MB_OK);
-        InterlockedExchange(&g_Running, 0);
-        if (g_hBtnStart) { EnableWindow(g_hBtnStart, 1); SetWindowTextW(g_hBtnStart, L"开始过检测"); }
-        _endthreadex(0); return 0;
-    }
-    g_LoginOK = 1;
-    
     AddLog(L"【1/4】正在清理残留...");
     DelFolder();
     AddLog(L"【1/4】清理完成");
@@ -363,7 +344,7 @@ static void StartMon() {
     if (g_hMonThread) { CloseHandle(g_hMonThread); g_hMonThread = NULL; }
     InterlockedExchange(&g_Running, 1);
     ClsLog();
-    AddLog(L"=== 夜白过检测 ==="); AddLog(L"正在验证卡密...");
+    AddLog(L"=== 夜白过检测 ==="); AddLog(L"【1/4】正在清理残留...");
     unsigned tid = 0;
     g_hMonThread = (HANDLE)_beginthreadex(NULL, 0, MonThrd, NULL, 0, &tid);
     if (!g_hMonThread) { AddLog(L"[!] 线程启动失败"); InterlockedExchange(&g_Running, 0); }
@@ -398,7 +379,7 @@ static LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         SendMessageW(g_hStatus,WM_SETFONT,(WPARAM)hFNorm,TRUE);
         SendMessageW(g_hBtnStart,WM_SETFONT,(WPARAM)hFNorm,TRUE);
         SendMessageW(g_hBtnExit,WM_SETFONT,(WPARAM)hFNorm,TRUE);
-        AddLog(L"=== 夜白过检测 1.0 ==="); AddLog(L"点击【开始过检测】按钮"); AddLog(L"然后启动游戏即可");
+        AddLog(L"=== 夜白过检测 1.0 ==="); AddLog(L"正在运行中...");
         return 0;
     }
     if (msg == WM_COMMAND) {
@@ -452,12 +433,34 @@ static int RequestElevation() {
 }
 
 // ====== WinMain ======
+static int VerifyKami() {
+    WCHAR kamiBuf[256] = {0};
+    if (MessageBoxW(NULL, L"请先输入卡密进行验证", L"夜白过检测 - 卡密验证", MB_OKCANCEL | MB_ICONQUESTION) != IDOK) {
+        return 0;
+    }
+    InputBoxW(kamiBuf, 255);
+    char kamiA[256]; WideCharToMultiByte(CP_ACP, 0, kamiBuf, -1, kamiA, sizeof(kamiA), NULL, NULL);
+    if (WyLogin(kamiA) != 0) {
+        MessageBoxW(NULL, L"微验登录失败", L"错误", MB_OK);
+        return 0;
+    }
+    g_LoginOK = 1;
+    return 1;
+}
+
 int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE hp, LPWSTR cl, int ns) {
     (void)hp; (void)cl; (void)ns;
     if (!IsAdmin()) {
         if (RequestElevation()) return 0;
     }
     InitializeCriticalSection(&g_csLog);
+    
+    // 先验证卡密，失败则退出
+    if (!VerifyKami()) {
+        DeleteCriticalSection(&g_csLog);
+        return 0;
+    }
+    
     WNDCLASSEXW mwc = {0}; mwc.cbSize = sizeof(WNDCLASSEXW);
     mwc.style = CS_HREDRAW|CS_VREDRAW; mwc.lpfnWndProc = MainProc; mwc.hInstance = hInst;
     mwc.hCursor = LoadCursor(NULL, IDC_ARROW); mwc.hbrBackground = (HBRUSH)(COLOR_BTNFACE+1);
