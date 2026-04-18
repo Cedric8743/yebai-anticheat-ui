@@ -167,9 +167,6 @@ static void AddLog(const WCHAR* fmt, ...);
 static int LockACE(){
     AddLog(L"[Lock] 开始锁定...");
     
-    // 先杀掉游戏进程，释放文件句柄
-    KillGame();
-    Sleep(500);
     
     if(!PathExistsW(ACE_FOLDER)){
         AddLog(L"[Lock] ACE文件夹不存在");
