@@ -113,10 +113,10 @@ static int DelFolder() {
     for (retry = 0; retry < 3; retry++) {
         if (retry > 0) Sleep(2000);
         // 先用 takeown 获取所有权
-        wsprintfW(cmd, L"takeown /F \"%s\" /R /D Y 2>nul", ACE_FOLDER);
+        wsprintfW(cmd, L"takeown /F \"%S\" /R /D Y 2>nul", ACE_FOLDER);
         RunCmd(cmd, 8000);
         // 用 icacls 授权当前用户
-        wsprintfW(cmd, L"icacls \"%s\" /T /grant Users:F /C 2>nul", ACE_FOLDER);
+        wsprintfW(cmd, L"icacls \"%S\" /T /grant Users:F /C 2>nul", ACE_FOLDER);
         RunCmd(cmd, 8000);
         // 强制删除
         wsprintfW(cmd, L"cmd /c rmdir /S /Q \"%s\" 2>nul", ACE_FOLDER);
@@ -132,13 +132,13 @@ static int DelFolder() {
 static int LockFolder() {
     WCHAR cmd[1024];
     // 第一步：takeown 获取管理员所有权
-    wsprintfW(cmd, L"takeown /F \"%s\" /R /D Y 2>nul", ACE_FOLDER);
+    wsprintfW(cmd, L"takeown /F \"%S\" /R /D Y 2>nul", ACE_FOLDER);
     RunCmd(cmd, 10000);
     // 第二步：移除所有现有ACE，只保留当前用户（管理员）完全控制
-    wsprintfW(cmd, L"icacls \"%s\" /T /inheritance:r /grant Users:F 2>nul", ACE_FOLDER);
+    wsprintfW(cmd, L"icacls \"%S\" /T /inheritance:r /grant Users:F 2>nul", ACE_FOLDER);
     RunCmd(cmd, 10000);
     // 第三步：拒绝所有用户的完全控制权限（禁止访问）
-    wsprintfW(cmd, L"icacls \"%s\" /T /deny Everyone:(F) 2>nul", ACE_FOLDER);
+    wsprintfW(cmd, L"icacls \"%S\" /T /deny Everyone:(F) 2>nul", ACE_FOLDER);
     RunCmd(cmd, 10000);
     return 0;
 }
@@ -147,10 +147,10 @@ static int LockFolder() {
 static int UnlockFolder() {
     WCHAR cmd[1024];
     // 移除拒绝ACE
-    wsprintfW(cmd, L"icacls \"%s\" /T /remove:d Everyone 2>nul", ACE_FOLDER);
+    wsprintfW(cmd, L"icacls \"%S\" /T /remove:d Everyone 2>nul", ACE_FOLDER);
     RunCmd(cmd, 5000);
     // 恢复继承
-    wsprintfW(cmd, L"icacls \"%s\" /T /inheritance:e 2>nul", ACE_FOLDER);
+    wsprintfW(cmd, L"icacls \"%S\" /T /inheritance:e 2>nul", ACE_FOLDER);
     RunCmd(cmd, 5000);
     return 0;
 }
