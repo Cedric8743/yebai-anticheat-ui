@@ -1,13 +1,9 @@
 /*
- * 夜白过检测 1.0 - Debug Build
- * Compile: x86_64-w64-mingw32-g++ -mwindows -municode -static -o YebaiAntiCheat.exe main.cpp -lwininet -ladvapi32 -lcomctl32
+ * 夜白过检测 1.0
+ * Compile: x86_64-w64-mingw32-g++ -mwindows -municode -static -o YebaiAntiCheat.exe main.cpp -lwininet -ladvapi32 -lcomctl32 -lshell32
  */
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
-#include <wininet.h>
-#include <aclapi.h>
-#include <sddl.h>
-#include <shellapi.h>
 #include <tlhelp32.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,17 +11,13 @@
 #include <stdarg.h>
 #include <time.h>
 #include <process.h>
+#include <shellapi.h>
 
 #pragma comment(lib, "wininet.lib")
 #pragma comment(lib, "advapi32.lib")
 #pragma comment(lib, "shell32.lib")
 
-// 日志已禁用
-static void Log(const char* fmt, ...) { (void)fmt; }
-static void LogW(const WCHAR* fmt, ...) { (void)fmt; }
-
 // ====== 配置 ======
-#define WIN_TITLE_W    L"夜白过检测 1.0"
 #define WIN_WIDTH      420
 #define WIN_HEIGHT     355
 #define ACE_FOLDER     L"C:\\Program Files\\AntiCheatExpert"
@@ -34,386 +26,345 @@ static void LogW(const WCHAR* fmt, ...) { (void)fmt; }
 // ====== 全局 ======
 static HWND g_hStatus = NULL;
 static HWND g_hBtnStart = NULL;
-static HWND g_hBtn退出程序 = NULL;
+static HWND g_hBtnExit = NULL;
+static HWND g_hMainWnd = NULL;
 static volatile LONG g_Running = 0;
 static HANDLE g_hMonThread = NULL;
 static WCHAR g_szLog[8192] = {0};
 static CRITICAL_SECTION g_csLog;
-static HWND g_hMainWnd = NULL;
 
-// ====== MD5（未使用）======
-
-// ====== HTTP GET ======
-static int HttpGet(const char* url,char* resp,int size){
-    URL_COMPONENTSA uc={0}; uc.dwStructSize=sizeof(uc);
-    char host[256]={0},path[2048]={0};
-    const char* p=strstr(url,"://"); const char* hs=p?p+3:url;
-    const char* ps=strchr(hs,'/');
-    if(ps){strncpy(host,hs,(int)(ps-hs));strncpy(path,ps,sizeof(path)-1);}
-    else {strncpy(host,hs,sizeof(host)-1);strcpy(path,"/");}
-    uc.lpszHostName=host; uc.dwHostNameLength=(DWORD)strlen(host);
-    uc.lpszUrlPath=path; uc.dwUrlPathLength=(DWORD)strlen(path);
-    HINTERNET hi=InternetOpenA("YeBaiAC/1.0",INTERNET_OPEN_TYPE_DIRECT,NULL,NULL,0);
-    if(!hi) return -1;
-    HINTERNET hc=InternetOpenUrlA(hi,url,NULL,0,INTERNET_FLAG_NO_CACHE_WRITE|INTERNET_FLAG_RELOAD|INTERNET_FLAG_NO_COOKIES,0);
-    if(!hc){InternetCloseHandle(hi);return -1;}
-    char buf[8192]; DWORD br=0; int tot=0;
-    while(InternetReadFile(hc,buf,sizeof(buf)-1,&br)&&br>0){
-        if(tot+(int)br>=size-1)br=(DWORD)(size-tot-1);
-        memcpy(resp+tot,buf,br);tot+=(int)br;resp[tot]=0;if(tot>=size-1)break;
+// ====== UI 日志 ======
+static void AddLog(const WCHAR* fmt, ...) {
+    WCHAR buf[512];
+    va_list ap;
+    va_start(ap, fmt);
+    vswprintf(buf, 512, fmt, ap);
+    va_end(ap);
+    EnterCriticalSection(&g_csLog);
+    int l = (int)wcslen(g_szLog);
+    if (l > 6000) memmove(g_szLog, g_szLog + 2000, sizeof(WCHAR) * 6000);
+    wcscat(g_szLog, buf);
+    wcscat(g_szLog, L"\r\n");
+    if (g_hStatus) {
+        SetWindowTextW(g_hStatus, g_szLog);
+        SendMessageW(g_hStatus, EM_SETSEL, -1, -1);
+        SendMessageW(g_hStatus, EM_SCROLLCARET, 0, 0);
     }
-    InternetCloseHandle(hc);InternetCloseHandle(hi);return 0;
+    LeaveCriticalSection(&g_csLog);
+}
+static void ClsLog() {
+    EnterCriticalSection(&g_csLog);
+    g_szLog[0] = 0;
+    if (g_hStatus) SetWindowTextW(g_hStatus, L"");
+    LeaveCriticalSection(&g_csLog);
 }
 
-// ====== JSON ======
-static int JInt(const char* j,const char* k){
-    char p[128];sprintf(p,"\"%s\"",k);const char* x=strstr(j,p);if(!x)return -1;
-    x=strchr(x,':');if(!x)return -1;x++;while(*x&&(*x==' '||*x=='\t'||*x=='\n'||*x=='\r'))x++;return atoi(x);
-}
-static int JStr(const char* j,const char* k,char* o,int osz){
-    char p[128];sprintf(p,"\"%s\"",k);const char* x=strstr(j,p);if(!x)return -1;
-    x=strchr(x,':');if(!x)return -1;x++;while(*x&&(*x==' '||*x=='\t'||*x=='\n'||*x=='\r'))x++;
-    if(*x=='"')x++;const char* e=x;while(*e&&*e!='"')e++;
-    int l=(int)(e-x);if(l>=osz)l=osz-1;strncpy(o,x,l);o[l]=0;return 0;
-}
-
-// ====== 文件 ======
-static int PathExistsW(const WCHAR* p){return GetFileAttributesW(p)!=INVALID_FILE_ATTRIBUTES;}
-static int DelFolderW(const WCHAR* p){
-    WCHAR cmd[1024];
-    STARTUPINFOW si={sizeof(si)}; PROCESS_INFORMATION pi={0};
-    si.dwFlags=STARTF_USESHOWWINDOW; si.wShowWindow=SW_HIDE;
-    int retry;
-    for(retry=0; retry<3; retry++){
-        if(retry > 0) Sleep(2000); // 重试前等2秒
-        // takeown 获取所有权
-        wsprintfW(cmd, L"takeown /F \"%S\" /R /D Y 2>nul", p);
-        if(CreateProcessW(NULL,cmd,NULL,NULL,TRUE,CREATE_NO_WINDOW,NULL,NULL,&si,&pi)){
-            WaitForSingleObject(pi.hProcess,8000);
-            CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
-        }
-        // icacls 移除限制
-        wsprintfW(cmd, L"icacls \"%S\" /T /grant Users:F /C 2>nul", p);
-        if(CreateProcessW(NULL,cmd,NULL,NULL,TRUE,CREATE_NO_WINDOW,NULL,NULL,&si,&pi)){
-            WaitForSingleObject(pi.hProcess,8000);
-            CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
-        }
-        // 强制删除
-        wsprintfW(cmd, L"cmd /c rmdir /S /Q \"%S\" 2>nul", p);
-        if(CreateProcessW(NULL,cmd,NULL,NULL,TRUE,CREATE_NO_WINDOW,NULL,NULL,&si,&pi)){
-            WaitForSingleObject(pi.hProcess,8000);
-            CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
-        }
-        // 检查是否还存在
-        if(!PathExistsW(p)) return 0; // 成功
+// ====== 进程检测 ======
+static int IsRunning(const WCHAR* n) {
+    HANDLE h = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (h == INVALID_HANDLE_VALUE) return 0;
+    PROCESSENTRY32W pe = {sizeof(PROCESSENTRY32W)};
+    BOOL ok = Process32FirstW(h, &pe);
+    int f = 0;
+    while (ok) {
+        if (wcsicmp(pe.szExeFile, n) == 0) { f = 1; break; }
+        ok = Process32NextW(h, &pe);
     }
-    return -1; // 失败
+    CloseHandle(h);
+    return f;
 }
 
-// ====== 进程 ======
-static int IsRunning(const WCHAR* n){
-    HANDLE h=CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS,0);
-    if(h==INVALID_HANDLE_VALUE)return 0;
-    PROCESSENTRY32W pe={sizeof(PROCESSENTRY32W)};BOOL ok=Process32FirstW(h,&pe);
-    int f=0;while(ok){if(wcsicmp(pe.szExeFile,n)==0){f=1;break;}ok=Process32NextW(h,&pe);}
-    CloseHandle(h);return f;
-}
-
-// ====== 权限（使用 icacls 命令）======
-static void KillGame(){
-    HANDLE h=CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS,0);
-    if(h==INVALID_HANDLE_VALUE)return;
-    PROCESSENTRY32W pe={sizeof(PROCESSENTRY32W)};BOOL ok=Process32FirstW(h,&pe);
-    while(ok){
-        if(wcsicmp(pe.szExeFile,GAME_PROC)==0){
-            HANDLE hp=OpenProcess(PROCESS_TERMINATE,FALSE,pe.th32ProcessID);
-            if(hp){TerminateProcess(hp,0);CloseHandle(hp);}
+// ====== 杀游戏进程 ======
+static void KillGame() {
+    HANDLE h = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (h == INVALID_HANDLE_VALUE) return;
+    PROCESSENTRY32W pe = {sizeof(PROCESSENTRY32W)};
+    BOOL ok = Process32FirstW(h, &pe);
+    while (ok) {
+        if (wcsicmp(pe.szExeFile, GAME_PROC) == 0) {
+            HANDLE hp = OpenProcess(PROCESS_TERMINATE, FALSE, pe.th32ProcessID);
+            if (hp) { TerminateProcess(hp, 0); CloseHandle(hp); }
             break;
         }
-        ok=Process32Next(h,&pe);
+        ok = Process32Next(h, &pe);
     }
     CloseHandle(h);
 }
-// ====== 权限修复版 ======
-static int LockACE(){
-    if(!PathExistsW(ACE_FOLDER)) return -1;
-    
-    WCHAR cmd[1024];
+
+// ====== 执行命令行并等待 ======
+static int RunCmd(WCHAR* cmd, int waitMs) {
     STARTUPINFOW si = {sizeof(si)};
     PROCESS_INFORMATION pi = {0};
     si.dwFlags = STARTF_USESHOWWINDOW;
     si.wShowWindow = SW_HIDE;
-    
-    // 移除继承+拒绝访问 合并一步完成
-    wsprintfW(cmd, L"icacls \"%S\" /inheritance:r /deny Everyone:(F)", ACE_FOLDER);
-    if(!CreateProcessW(NULL, cmd, NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)){
+    if (!CreateProcessW(NULL, cmd, NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
         return -1;
     }
-    WaitForSingleObject(pi.hProcess, 10000);
+    WaitForSingleObject(pi.hProcess, waitMs);
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
-    
     return 0;
 }
 
-static int UnlockACE(){
-    
-    if(!PathExistsW(ACE_FOLDER)){
-            return 0;
-    }
-    
+// ====== 删除文件夹（带重试）======
+static int DelFolder() {
     WCHAR cmd[1024];
-    
-    // 先移除拒绝ACE
-    wsprintfW(cmd, L"icacls \"%S\" /remove:d Everyone", ACE_FOLDER);
-    
-    STARTUPINFOW si = {sizeof(si)};
-    PROCESS_INFORMATION pi = {0};
-    si.dwFlags = STARTF_USESHOWWINDOW;
-    si.wShowWindow = SW_HIDE;
-    
-    if(!CreateProcessW(NULL, cmd, NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)){
-        return -1;
+    int retry;
+    for (retry = 0; retry < 3; retry++) {
+        if (retry > 0) Sleep(2000);
+        // 先用 takeown 获取所有权
+        wsprintfW(cmd, L"takeown /F \"%s\" /R /D Y 2>nul", ACE_FOLDER);
+        RunCmd(cmd, 8000);
+        // 用 icacls 授权当前用户
+        wsprintfW(cmd, L"icacls \"%s\" /T /grant Users:F /C 2>nul", ACE_FOLDER);
+        RunCmd(cmd, 8000);
+        // 强制删除
+        wsprintfW(cmd, L"cmd /c rmdir /S /Q \"%s\" 2>nul", ACE_FOLDER);
+        RunCmd(cmd, 8000);
+        // 检查是否还存在
+        if (GetFileAttributesW(ACE_FOLDER) == INVALID_FILE_ATTRIBUTES) return 0;
     }
-    WaitForSingleObject(pi.hProcess, 5000);
-    CloseHandle(pi.hProcess);
-    CloseHandle(pi.hThread);
-    
+    return -1;
+}
+
+// ====== 锁住文件夹权限 =======
+// 效果等同于手动：右键属性->安全->高级->禁用继承->删除所有用户->只保留所有者
+static int LockFolder() {
+    WCHAR cmd[1024];
+    // 第一步：takeown 获取管理员所有权
+    wsprintfW(cmd, L"takeown /F \"%s\" /R /D Y 2>nul", ACE_FOLDER);
+    RunCmd(cmd, 10000);
+    // 第二步：移除所有现有ACE，只保留当前用户（管理员）完全控制
+    wsprintfW(cmd, L"icacls \"%s\" /T /inheritance:r /grant Users:F 2>nul", ACE_FOLDER);
+    RunCmd(cmd, 10000);
+    // 第三步：拒绝所有用户的完全控制权限（禁止访问）
+    wsprintfW(cmd, L"icacls \"%s\" /T /deny Everyone:(F) 2>nul", ACE_FOLDER);
+    RunCmd(cmd, 10000);
+    return 0;
+}
+
+// ====== 解锁文件夹权限 =======
+static int UnlockFolder() {
+    WCHAR cmd[1024];
+    // 移除拒绝ACE
+    wsprintfW(cmd, L"icacls \"%s\" /T /remove:d Everyone 2>nul", ACE_FOLDER);
+    RunCmd(cmd, 5000);
     // 恢复继承
-    wsprintfW(cmd, L"icacls \"%S\" /inheritance:e", ACE_FOLDER);
-    
-    si = {sizeof(si)};
-    pi = {0};
-    si.dwFlags = STARTF_USESHOWWINDOW;
-    si.wShowWindow = SW_HIDE;
-    
-    if(!CreateProcessW(NULL, cmd, NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)){
-        return -1;
-    }
-    WaitForSingleObject(pi.hProcess, 5000);
-    CloseHandle(pi.hProcess);
-    CloseHandle(pi.hThread);
-    
+    wsprintfW(cmd, L"icacls \"%s\" /T /inheritance:e 2>nul", ACE_FOLDER);
+    RunCmd(cmd, 5000);
     return 0;
 }
-
-
-// ====== UI 日志 ======
-static void AddLog(const WCHAR* fmt,...){
-    WCHAR buf[512];va_list ap;va_start(ap,fmt);vswprintf(buf,512,fmt,ap);va_end(ap);
-    EnterCriticalSection(&g_csLog);
-    int l=(int)wcslen(g_szLog);
-    if(l>6000)memmove(g_szLog,g_szLog+2000,sizeof(WCHAR)*6000);
-    wcscat(g_szLog,buf);wcscat(g_szLog,L"\r\n");
-    if(g_hStatus){SetWindowTextW(g_hStatus,g_szLog);SendMessageW(g_hStatus,EM_SETSEL,-1,-1);SendMessageW(g_hStatus,EM_SCROLLCARET,0,0);}
-    LeaveCriticalSection(&g_csLog);
-}
-static void ClsLog(){EnterCriticalSection(&g_csLog);g_szLog[0]=0;if(g_hStatus)SetWindowTextW(g_hStatus,L"");LeaveCriticalSection(&g_csLog);}
 
 // ====== 监控线程 ======
-static unsigned __stdcall MonThrd(void* a){
+static unsigned __stdcall MonThrd(void* a) {
     (void)a;
-    Log("监控线程启动");
-    AddLog(L"【1/6】正在清理辅助残留...");
-    DelFolderW(ACE_FOLDER);
-    AddLog(L"【1/6】清理完成");
-    AddLog(L"【2/6】等待游戏启动...");
-    DWORD st=GetTickCount();
-    while(g_Running){
-        if(IsRunning(GAME_PROC)){AddLog(L"【2/6】检测到游戏进程!");break;}
-        if(GetTickCount()-st>600000){AddLog(L"【2/6】等待超时");InterlockedExchange(&g_Running,0);
-            if(g_hBtnStart){EnableWindow(g_hBtnStart,1);SetWindowTextW(g_hBtnStart,L"开始过检测");}
-            _endthreadex(0);return 0;}
+    AddLog(L"【1/4】正在清理残留...");
+    DelFolder();
+    AddLog(L"【1/4】清理完成");
+    AddLog(L"【2/4】等待游戏启动...");
+
+    // 等待游戏启动
+    DWORD st = GetTickCount();
+    while (g_Running) {
+        if (IsRunning(GAME_PROC)) { AddLog(L"【2/4】检测到游戏进程!"); break; }
+        if (GetTickCount() - st > 600000) {
+            AddLog(L"【2/4】等待超时");
+            InterlockedExchange(&g_Running, 0);
+            if (g_hBtnStart) { EnableWindow(g_hBtnStart, 1); SetWindowTextW(g_hBtnStart, L"开始过检测"); }
+            _endthreadex(0); return 0;
+        }
         Sleep(500);
     }
-    if(!g_Running){AddLog(L"【2/6】用户取消");_endthreadex(0);return 0;}
-    AddLog(L"【3/6】等待辅助加载中...");Sleep(5000);
-    AddLog(L"【4/6】过检测执行中...");
-    if(LockACE() == 0){
-        AddLog(L"【4/6】过检测执行成功!");
-    } else {
-        AddLog(L"【4/6】过检测执行失败!");
-    }
-    AddLog(L"【5/6】监控游戏中......");
-    while(g_Running){
-        if(!IsRunning(GAME_PROC)){
-            // 确认一次，避免误报
-            Sleep(1000);
-            if(!IsRunning(GAME_PROC)){
-                AddLog(L"【5/6】检测到游戏已退出!");
+    if (!g_Running) { AddLog(L"【2/4】用户取消"); _endthreadex(0); return 0; }
+
+    // 游戏已启动，等待5秒让ACE文件夹生成
+    AddLog(L"【3/4】过检测执行中...");
+    Sleep(5000);
+
+    // 锁住文件夹权限
+    LockFolder();
+    AddLog(L"【3/4】过检测执行成功!");
+
+    // 监控游戏是否退出
+    AddLog(L"【4/4】监控中...");
+    while (g_Running) {
+        if (!IsRunning(GAME_PROC)) {
+            Sleep(1500); // 确认一下
+            if (!IsRunning(GAME_PROC)) {
+                AddLog(L"【4/4】游戏已退出!");
                 break;
             }
-            AddLog(L"【5/6】游戏进程恢复，重新监控...");
+            AddLog(L"【4/4】游戏恢复，继续监控...");
         }
         Sleep(1000);
     }
-    AddLog(L"【6/6】正在清理残留...");UnlockACE();DelFolderW(ACE_FOLDER);
-    AddLog(L"=== Anti-cheat done! ===");
-    InterlockedExchange(&g_Running,0);
-    if(g_hBtnStart){EnableWindow(g_hBtnStart,1);SetWindowTextW(g_hBtnStart,L"开始过检测");}
-    AddLog(L"正在退出...");
-    Sleep(500);
-    if(g_hMainWnd) PostMessageW(g_hMainWnd, WM_CLOSE, 0, 0);
-    Log("监控线程结束");
-    _endthreadex(0);return 0;
-}
-static void StartMon(){
-    if(g_hMonThread){CloseHandle(g_hMonThread);g_hMonThread=NULL;}
-    InterlockedExchange(&g_Running,1);
-    ClsLog();AddLog(L"=== 夜白过检测 ===");AddLog(L"请启动游戏...");
-    unsigned tid=0;
-    g_hMonThread=(HANDLE)_beginthreadex(NULL,0,MonThrd,NULL,0,&tid);
-    if(!g_hMonThread){AddLog(L"[!] 线程启动失败");InterlockedExchange(&g_Running,0);}
-}
-static void StopMon(){
-    if(g_Running){InterlockedExchange(&g_Running,0);}
+
+    // 游戏退出，解锁+删除+自动退出程序
+    if (g_Running) {
+        AddLog(L"正在清理...");
+        UnlockFolder();
+        DelFolder();
+        KillGame();
+    }
+
+    AddLog(L"=== 完成 ===");
+    InterlockedExchange(&g_Running, 0);
+    if (g_hBtnStart) { EnableWindow(g_hBtnStart, 1); SetWindowTextW(g_hBtnStart, L"开始过检测"); }
+    Sleep(800);
+    if (g_hMainWnd) PostMessageW(g_hMainWnd, WM_CLOSE, 0, 0);
+    _endthreadex(0);
+    return 0;
 }
 
+static void StartMon() {
+    if (g_hMonThread) { CloseHandle(g_hMonThread); g_hMonThread = NULL; }
+    InterlockedExchange(&g_Running, 1);
+    ClsLog();
+    AddLog(L"=== 夜白过检测 ===");
+    AddLog(L"请启动游戏...");
+    unsigned tid = 0;
+    g_hMonThread = (HANDLE)_beginthreadex(NULL, 0, MonThrd, NULL, 0, &tid);
+    if (!g_hMonThread) { AddLog(L"[!] 线程启动失败"); InterlockedExchange(&g_Running, 0); }
+}
+
+static void StopMon() {
+    if (g_Running) InterlockedExchange(&g_Running, 0);
+}
 
 // ====== 主窗口 ======
-static LRESULT CALLBACK MainProc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){
-    static HFONT hFTitle=0,hFNorm=0;
-    if(msg==WM_CREATE){
-        hFTitle=CreateFontW(22,0,0,0,FW_BOLD,0,0,0,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,DEFAULT_PITCH|FF_DONTCARE,L"Microsoft YaHei UI");
-        hFNorm=CreateFontW(13,0,0,0,FW_NORMAL,0,0,0,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,DEFAULT_PITCH|FF_DONTCARE,L"Microsoft YaHei UI");
-        CreateWindowW(L"static",L"夜白过检测 1.0",
-            WS_CHILD|WS_VISIBLE|SS_CENTER,60,8,300,35,hwnd,NULL,NULL,NULL);
-        CreateWindowW(L"static",L"Log:",
-            WS_CHILD|WS_VISIBLE,15,50,40,20,hwnd,NULL,NULL,NULL);
-        g_hStatus=CreateWindowW(L"edit",L"",
-            WS_CHILD|WS_VISIBLE|WS_BORDER|ES_READONLY|ES_MULTILINE|ES_AUTOVSCROLL|WS_VSCROLL,
-            15,72,WIN_WIDTH-30,WIN_HEIGHT-160,hwnd,(HMENU)10,NULL,NULL);
-        g_hBtnStart=CreateWindowW(L"button",L"开始过检测",
-            WS_CHILD|WS_VISIBLE|BS_PUSHBUTTON,30,WIN_HEIGHT-75,150,35,hwnd,(HMENU)20,NULL,NULL);
-        g_hBtn退出程序=CreateWindowW(L"button",L"退出程序",
-            WS_CHILD|WS_VISIBLE|BS_PUSHBUTTON,WIN_WIDTH-180,WIN_HEIGHT-75,150,35,hwnd,(HMENU)21,NULL,NULL);
-        SendMessageW(GetDlgItem(hwnd,10),WM_SETFONT,(WPARAM)hFTitle,TRUE);
-        SendMessageW(GetDlgItem(hwnd,11),WM_SETFONT,(WPARAM)hFNorm,TRUE);
-        SendMessageW(g_hStatus,WM_SETFONT,(WPARAM)hFNorm,TRUE);
-        SendMessageW(g_hBtnStart,WM_SETFONT,(WPARAM)hFNorm,TRUE);
-        SendMessageW(g_hBtn退出程序,WM_SETFONT,(WPARAM)hFNorm,TRUE);
+static LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    static HFONT hFTitle = 0, hFNorm = 0;
+    if (msg == WM_CREATE) {
+        hFTitle = CreateFontW(22, 0, 0, 0, FW_BOLD, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
+        hFNorm = CreateFontW(13, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
+        CreateWindowW(L"static", L"夜白过检测 1.0",
+            WS_CHILD | WS_VISIBLE | SS_CENTER, 60, 8, 300, 35, hwnd, NULL, NULL, NULL);
+        CreateWindowW(L"static", L"Log:",
+            WS_CHILD | WS_VISIBLE, 15, 50, 40, 20, hwnd, NULL, NULL, NULL);
+        g_hStatus = CreateWindowW(L"edit", L"",
+            WS_CHILD | WS_VISIBLE | WS_BORDER | ES_READONLY | ES_MULTILINE | ES_AUTOVSCROLL | WS_VSCROLL,
+            15, 72, WIN_WIDTH - 30, WIN_HEIGHT - 160, hwnd, (HMENU)10, NULL, NULL);
+        g_hBtnStart = CreateWindowW(L"button", L"开始过检测",
+            WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 30, WIN_HEIGHT - 75, 150, 35, hwnd, (HMENU)20, NULL, NULL);
+        g_hBtnExit = CreateWindowW(L"button", L"退出程序",
+            WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, WIN_WIDTH - 180, WIN_HEIGHT - 75, 150, 35, hwnd, (HMENU)21, NULL, NULL);
+        SendMessageW(GetDlgItem(hwnd, 10), WM_SETFONT, (WPARAM)hFTitle, TRUE);
+        SendMessageW(GetDlgItem(hwnd, 11), WM_SETFONT, (WPARAM)hFNorm, TRUE);
+        SendMessageW(g_hStatus, WM_SETFONT, (WPARAM)hFNorm, TRUE);
+        SendMessageW(g_hBtnStart, WM_SETFONT, (WPARAM)hFNorm, TRUE);
+        SendMessageW(g_hBtnExit, WM_SETFONT, (WPARAM)hFNorm, TRUE);
         AddLog(L"=== 夜白过检测 1.0 ===");
         AddLog(L"点击【开始过检测】按钮");
         AddLog(L"然后启动游戏即可");
-        Log("主窗口已创建");
         return 0;
     }
-    if(msg==WM_COMMAND){
-        if(LOWORD(wp)==20){
-            if(!g_Running){StartMon();SetWindowTextW(g_hBtnStart,L"停止过检测");}
-            else{
+    if (msg == WM_COMMAND) {
+        if (LOWORD(wp) == 20) {  // 开始/停止过检测
+            if (!g_Running) {
+                StartMon();
+                SetWindowTextW(g_hBtnStart, L"停止过检测");
+            } else {
                 AddLog(L"正在清理...");
-                UnlockACE();
-                DelFolderW(ACE_FOLDER);
+                UnlockFolder();
+                DelFolder();
                 KillGame();
-                if(g_Running)StopMon();
-                SetWindowTextW(g_hBtnStart,L"开始过检测");
+                StopMon();
+                SetWindowTextW(g_hBtnStart, L"开始过检测");
             }
         }
-        if(LOWORD(wp)==21){
+        if (LOWORD(wp) == 21) {  // 退出程序
             AddLog(L"正在清理...");
-            UnlockACE();
-            DelFolderW(ACE_FOLDER);
+            UnlockFolder();
+            DelFolder();
             KillGame();
-            if(g_Running)StopMon();
+            if (g_Running) StopMon();
             Sleep(200);
             DestroyWindow(hwnd);
         }
     }
-    if(msg==WM_CLOSE){
+    if (msg == WM_CLOSE) {
         AddLog(L"正在清理...");
-        UnlockACE();
-        DelFolderW(ACE_FOLDER);
+        UnlockFolder();
+        DelFolder();
         KillGame();
-        if(g_Running)StopMon();
+        if (g_Running) StopMon();
         Sleep(200);
-        DestroyWindow(hwnd);return 0;
+        DestroyWindow(hwnd);
+        return 0;
     }
-    if(msg==WM_DESTROY){DeleteObject(hFTitle);DeleteObject(hFNorm);PostQuitMessage(0);return 0;}
-    return DefWindowProcW(hwnd,msg,wp,lp);
+    if (msg == WM_DESTROY) { DeleteObject(hFTitle); DeleteObject(hFNorm); PostQuitMessage(0); return 0; }
+    return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
-// ====== WinMain ======
-// 检查并请求管理员权限
-static int RequestAdmin(){
-    HANDLE hToken=0;
-    if(!OpenProcessToken(GetCurrentProcess(),TOKEN_ADJUST_PRIVILEGES|TOKEN_QUERY,&hToken)) return 0;
-    TOKEN_PRIVILEGES tp={1,{0,0,SE_PRIVILEGE_ENABLED}};
-    if(!LookupPrivilegeValueW(NULL,SE_SECURITY_NAME,&tp.Privileges[0].Luid)){CloseHandle(hToken);return 0;}
-    if(!AdjustTokenPrivileges(hToken,FALSE,&tp,sizeof(tp),NULL,0)){CloseHandle(hToken);return 0;}
-    CloseHandle(hToken); return 1;
-}
-static int IsAdmin(){
-    HANDLE hToken=0;
-    if(!OpenProcessToken(GetCurrentProcess(),TOKEN_QUERY,&hToken)) return 0;
-    TOKEN_GROUPS* tg=(TOKEN_GROUPS*)malloc(1024);
-    DWORD sz=1024; int isAdm=0;
-    if(GetTokenInformation(hToken,TokenGroups,tg,1024,&sz)){
-        for(DWORD i=0;i<tg->GroupCount;i++){
-            if(tg->Groups[i].Sid==NULL) continue;
+// ====== 权限 ======
+static int IsAdmin() {
+    HANDLE hToken = 0;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &hToken)) return 0;
+    TOKEN_GROUPS* tg = (TOKEN_GROUPS*)malloc(1024);
+    DWORD sz = 1024;
+    int isAdm = 0;
+    if (GetTokenInformation(hToken, TokenGroups, tg, 1024, &sz)) {
+        for (DWORD i = 0; i < tg->GroupCount; i++) {
+            if (!tg->Groups[i].Sid) continue;
             SID_NAME_USE snu;
-            WCHAR name[256]={0},dom[256]={0};
-            DWORD nsz=256,dsz=256;
-            if(LookupAccountSidW(NULL,tg->Groups[i].Sid,name,&nsz,dom,&dsz,&snu)){
-                if(wcscmp(name,L"Administrators")==0 || wcscmp(name,L"Admin")==0){
-                    isAdm=1; break;
-                }
+            WCHAR name[256] = {0}, dom[256] = {0};
+            DWORD nsz = 256, dsz = 256;
+            if (LookupAccountSidW(NULL, tg->Groups[i].Sid, name, &nsz, dom, &dsz, &snu)) {
+                if (wcscmp(name, L"Administrators") == 0 || wcscmp(name, L"Admin") == 0) { isAdm = 1; break; }
             }
         }
     }
-    free(tg); CloseHandle(hToken); return isAdm;
+    free(tg);
+    CloseHandle(hToken);
+    return isAdm;
 }
-static int RequestElevation(){
+
+static int RequestElevation() {
     WCHAR exePath[MAX_PATH];
-    GetModuleFileNameW(NULL,exePath,MAX_PATH);
-    SHELLEXECUTEINFOW sei={sizeof(sei),SEE_MASK_NOCLOSEPROCESS|SEE_MASK_FLAG_NO_UI};
-    sei.lpVerb=L"runas";
-    sei.lpFile=exePath;
-    sei.nShow=SW_SHOWNORMAL;
+    GetModuleFileNameW(NULL, exePath, MAX_PATH);
+    SHELLEXECUTEINFOW sei = {sizeof(sei), SEE_MASK_NOCLOSEPROCESS | SEE_MASK_FLAG_NO_UI};
+    sei.lpVerb = L"runas";
+    sei.lpFile = exePath;
+    sei.nShow = SW_SHOWNORMAL;
     return ShellExecuteExW(&sei);
 }
 
-int WINAPI wWinMain(HINSTANCE hInst,HINSTANCE hp,LPWSTR cl,int ns){
-    (void)hp;(void)cl;(void)ns;
-    Log("=== 程序启动 ===");
+// ====== WinMain ======
+int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE hp, LPWSTR cl, int ns) {
+    (void)hp; (void)cl; (void)ns;
 
-    // 检查管理员权限，没有则请求提权
-    if(!IsAdmin()){
-        Log("非管理员，正在请求提权...");
-        if(RequestElevation()){
-            Log("提权成功，正在重启");
-            return 0;
-        }
-        Log("提权被拒绝，继续运行");
-    } else {
-        Log("以管理员身份运行");
+    // 请求管理员权限
+    if (!IsAdmin()) {
+        if (RequestElevation()) return 0;
     }
-    RequestAdmin(); // 启用 SE_SECURITY_NAME 特权
-    Log("=== 程序启动 ===");
+
     InitializeCriticalSection(&g_csLog);
 
-    // 注册主窗口类
-    WNDCLASSEXW mwc={0};mwc.cbSize=sizeof(WNDCLASSEXW);
-    mwc.style=CS_HREDRAW|CS_VREDRAW;mwc.lpfnWndProc=MainProc;mwc.hInstance=hInst;
-    mwc.hCursor=LoadCursor(NULL,IDC_ARROW);mwc.hbrBackground=(HBRUSH)(COLOR_BTNFACE+1);
-    mwc.lpszClassName=L"YeBaiMain";
-    if(!RegisterClassExW(&mwc)){Log("RegisterClassExW main FAILED");MessageBoxW(NULL,L"Reg failed",L"Error",MB_OK);return 1;}
-    Log("Main class registered");
+    WNDCLASSEXW mwc = {0};
+    mwc.cbSize = sizeof(WNDCLASSEXW);
+    mwc.style = CS_HREDRAW | CS_VREDRAW;
+    mwc.lpfnWndProc = MainProc;
+    mwc.hInstance = hInst;
+    mwc.hCursor = LoadCursor(NULL, IDC_ARROW);
+    mwc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
+    mwc.lpszClassName = L"YeBaiMain";
+    if (!RegisterClassExW(&mwc)) { MessageBoxW(NULL, L"注册失败", L"错误", MB_OK); return 1; }
 
-    int sw=GetSystemMetrics(SM_CXSCREEN),sh=GetSystemMetrics(SM_CYSCREEN);
-    HWND hMain=CreateWindowExW(0,L"YeBaiMain",L"夜白过检测 1.0",
-        WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX,
-        (sw-WIN_WIDTH)/2,(sh-WIN_HEIGHT)/2,
-        WIN_WIDTH,WIN_HEIGHT,NULL,NULL,hInst,NULL);
-    if(!hMain){Log("CreateWindowExW main FAILED");MessageBoxW(NULL,L"Main window failed",L"Error",MB_OK);return 1;}
-    Log("Main window created, showing");
-    ShowWindow(hMain,SW_SHOW);UpdateWindow(hMain);
+    int sw = GetSystemMetrics(SM_CXSCREEN), sh = GetSystemMetrics(SM_CYSCREEN);
+    HWND hMain = CreateWindowExW(0, L"YeBaiMain", L"夜白过检测 1.0",
+        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
+        (sw - WIN_WIDTH) / 2, (sh - WIN_HEIGHT) / 2,
+        WIN_WIDTH, WIN_HEIGHT, NULL, NULL, hInst, NULL);
+    if (!hMain) { MessageBoxW(NULL, L"创建窗口失败", L"错误", MB_OK); return 1; }
+    g_hMainWnd = hMain;
+    ShowWindow(hMain, SW_SHOW);
+    UpdateWindow(hMain);
 
     MSG m;
-    while(GetMessage(&m,NULL,0,0)){
-        TranslateMessage(&m);DispatchMessage(&m);
+    while (GetMessage(&m, NULL, 0, 0)) {
+        TranslateMessage(&m);
+        DispatchMessage(&m);
     }
     DeleteCriticalSection(&g_csLog);
-    Log("=== wWinMain END ===");
     return 0;
 }
