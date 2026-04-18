@@ -113,13 +113,13 @@ static int DelFolder() {
     for (retry = 0; retry < 3; retry++) {
         if (retry > 0) Sleep(2000);
         // 先用 takeown 获取所有权
-        wsprintfW(cmd, L"takeown /F \"%S\" /R /D Y 2>nul", ACE_FOLDER);
+        wsprintfW(cmd, L"takeown /F \"C:\\Program Files\\AntiCheatExpert\\*\" /R /D Y 2>nul");
         RunCmd(cmd, 8000);
         // 用 icacls 授权当前用户
-        wsprintfW(cmd, L"icacls \"%S\" /T /grant Users:F /C 2>nul", ACE_FOLDER);
+        wsprintfW(cmd, L"icacls \"C:\\Program Files\\AntiCheatExpert\" /T /grant Users:F /C 2>nul");
         RunCmd(cmd, 8000);
         // 强制删除
-        wsprintfW(cmd, L"cmd /c rmdir /S /Q \"%S\" 2>nul", ACE_FOLDER);
+        wsprintfW(cmd, L"cmd /c rmdir /S /Q \"C:\\Program Files\\AntiCheatExpert\" 2>nul");
         RunCmd(cmd, 8000);
         // 检查是否还存在
         if (GetFileAttributesW(ACE_FOLDER) == INVALID_FILE_ATTRIBUTES) return 0;
@@ -130,9 +130,11 @@ static int DelFolder() {
 // ====== 锁住文件夹权限 =======
 // 效果等同于手动：右键属性->安全->高级->禁用继承->删除所有用户->只保留所有者
 static int LockFolder() {
-    WCHAR cmd[1024];
-    // 移除继承，拒绝所有用户的访问权限（递归）
-    wsprintfW(cmd, L"icacls \"%S\" /inheritance:r /deny Everyone:(F) /T /C", ACE_FOLDER);
+    WCHAR cmd[2048];
+    // icacls "C:\Program Files\AntiCheatExpert" /inheritance:r /deny Everyone:(F)
+    const WCHAR* folder = ACE_FOLDER;
+    // Use the actual path directly in the command
+    wsprintfW(cmd, L"icacls \"C:\\Program Files\\AntiCheatExpert\" /inheritance:r /deny Everyone:(F) /T");
     RunCmd(cmd, 15000);
     return 0;
 }
@@ -141,10 +143,10 @@ static int LockFolder() {
 static int UnlockFolder() {
     WCHAR cmd[1024];
     // 移除拒绝ACE
-    wsprintfW(cmd, L"icacls \"%S\" /T /remove:d Everyone 2>nul", ACE_FOLDER);
+    wsprintfW(cmd, L"icacls \"C:\\Program Files\\AntiCheatExpert\" /T /remove:d Everyone 2>nul");
     RunCmd(cmd, 5000);
     // 恢复继承
-    wsprintfW(cmd, L"icacls \"%S\" /T /inheritance:e 2>nul", ACE_FOLDER);
+    wsprintfW(cmd, L"icacls \"C:\\Program Files\\AntiCheatExpert\" /T /inheritance:e 2>nul");
     RunCmd(cmd, 5000);
     return 0;
 }
