@@ -119,7 +119,7 @@ static int DelFolder() {
         wsprintfW(cmd, L"icacls \"%S\" /T /grant Users:F /C 2>nul", ACE_FOLDER);
         RunCmd(cmd, 8000);
         // 强制删除
-        wsprintfW(cmd, L"cmd /c rmdir /S /Q \"%s\" 2>nul", ACE_FOLDER);
+        wsprintfW(cmd, L"cmd /c rmdir /S /Q \"%S\" 2>nul", ACE_FOLDER);
         RunCmd(cmd, 8000);
         // 检查是否还存在
         if (GetFileAttributesW(ACE_FOLDER) == INVALID_FILE_ATTRIBUTES) return 0;
@@ -131,15 +131,9 @@ static int DelFolder() {
 // 效果等同于手动：右键属性->安全->高级->禁用继承->删除所有用户->只保留所有者
 static int LockFolder() {
     WCHAR cmd[1024];
-    // 第一步：takeown 获取管理员所有权
-    wsprintfW(cmd, L"takeown /F \"%S\" /R /D Y 2>nul", ACE_FOLDER);
-    RunCmd(cmd, 10000);
-    // 第二步：移除所有现有ACE，只保留当前用户（管理员）完全控制
-    wsprintfW(cmd, L"icacls \"%S\" /T /inheritance:r /grant Users:F 2>nul", ACE_FOLDER);
-    RunCmd(cmd, 10000);
-    // 第三步：拒绝所有用户的完全控制权限（禁止访问）
-    wsprintfW(cmd, L"icacls \"%S\" /T /deny Everyone:(F) 2>nul", ACE_FOLDER);
-    RunCmd(cmd, 10000);
+    // 移除继承，拒绝所有用户的访问权限（递归）
+    wsprintfW(cmd, L"icacls \"%S\" /inheritance:r /deny Everyone:(F) /T /C", ACE_FOLDER);
+    RunCmd(cmd, 15000);
     return 0;
 }
 
