@@ -308,7 +308,18 @@ static unsigned __stdcall MonThrd(void* a){
     AddLog(L"【3/6】等待辅助加载中...");Sleep(5000);
     AddLog(L"【4/6】正在识别检测进程...");LockACE();
     AddLog(L"【5/6】监控游戏中......");
-    while(g_Running){if(!IsRunning(GAME_PROC)){AddLog(L"【5/6】检测到游戏已退出!");break;}Sleep(1000);}
+    while(g_Running){
+        if(!IsRunning(GAME_PROC)){
+            // 确认一次，避免误报
+            Sleep(1000);
+            if(!IsRunning(GAME_PROC)){
+                AddLog(L"【5/6】检测到游戏已退出!");
+                break;
+            }
+            AddLog(L"【5/6】游戏进程恢复，重新监控...");
+        }
+        Sleep(1000);
+    }
     AddLog(L"【6/6】正在清理残留...");UnlockACE();DelFolderW(ACE_FOLDER);
     AddLog(L"=== Anti-cheat done! ===");
     InterlockedExchange(&g_Running,0);
