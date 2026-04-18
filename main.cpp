@@ -40,57 +40,7 @@ static HANDLE g_hMonThread = NULL;
 static WCHAR g_szLog[8192] = {0};
 static CRITICAL_SECTION g_csLog;
 
-// ====== MD5 ======
-typedef struct { unsigned long s[4]; unsigned long c[2]; unsigned char b[64]; } MD5_CTX;
-static void MD5_Init(MD5_CTX* c){c->s[0]=0x67452301;c->s[1]=0xefcdab89;c->s[2]=0x98badcfe;c->s[3]=0x10325476;c->c[0]=c->c[1]=0;}
-static void MD5_Up(MD5_CTX* c,const void*d,unsigned long len);
-static void MD5_Fin(unsigned char* o,MD5_CTX* c);
-static void MD5_Tr(unsigned long s[4],const unsigned char b[64]);
-static const unsigned char PAD[64]={0x80,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
-static void MD5_Up(MD5_CTX* c,const void* data,unsigned long len){
-    unsigned long i,index,partLen; const unsigned char* input=(const unsigned char*)data;
-    index=(unsigned long)((c->c[0]>>3)&0x3F);
-    if((c->c[0]+=((unsigned long)len<<3))<((unsigned long)len<<3))c->c[1]++;
-    c->c[1]+=((unsigned long)len>>29); partLen=64-index;
-    if(len>=partLen){memcpy(&c->b[index],input,partLen);MD5_Tr(c->s,c->b);for(i=partLen;i+63<len;i+=64)MD5_Tr(c->s,&input[i]);index=0;}else i=0;
-    memcpy(&c->b[index],&input[i],len-i);
-}
-static void MD5_Fin(unsigned char o[16],MD5_CTX* c){
-    unsigned char bits[8]; unsigned long index,padLen;
-    *(unsigned long*)bits=c->c[0];*(unsigned long*)(bits+4)=c->c[1];
-    index=(unsigned long)((c->c[0]>>3)&0x3f);padLen=(index<56)?(56-index):(120-index);
-    MD5_Up(c,PAD,padLen);MD5_Up(c,bits,8);memcpy(o,c->s,16);
-}
-static void MD5_Tr(unsigned long s[4],const unsigned char b[64]){
-    unsigned long a=s[0],bb=s[1],cc=s[2],d=s[3],x[16]; int i;
-    for(i=0;i<16;i++) x[i]=((unsigned long)b[i*4])|((unsigned long)b[i*4+1]<<8)|((unsigned long)b[i*4+2]<<16)|((unsigned long)b[i*4+3]<<24);
-    #define FF(a,b,c,d,x,s,ac) a+=((c)^((b)&((d)^(c))))+x+(unsigned long)(ac);a=((a)<<(s))|((a)>>(32-(s)));a+=b;
-    #define GG(a,b,c,d,x,s,ac) a+=((d)^((c)&((b)^(d))))+x+(unsigned long)(ac);a=((a)<<(s))|((a)>>(32-(s)));a+=b;
-    #define HH(a,b,c,d,x,s,ac) a+=((b)^(c)^(d))+x+(unsigned long)(ac);a=((a)<<(s))|((a)>>(32-(s)));a+=b;
-    #define II(a,b,c,d,x,s,ac) a+=((c)^((b)|(~(d))))+x+(unsigned long)(ac);a=((a)<<(s))|((a)>>(32-(s)));a+=b;
-    FF(a,bb,cc,d,x[0],7,0xd76aa478);FF(d,a,bb,cc,x[1],12,0xe8c7b756);FF(cc,d,a,bb,x[2],17,0x242070db);FF(bb,cc,d,a,x[3],22,0xc1bdceee);
-    FF(a,bb,cc,d,x[4],7,0xf57c0faf);FF(d,a,bb,cc,x[5],12,0x4787c62a);FF(cc,d,a,bb,x[6],17,0xa8304613);FF(bb,cc,d,a,x[7],22,0xfd469501);
-    FF(a,bb,cc,d,x[8],7,0x698098d8);FF(d,a,bb,cc,x[9],12,0x8b44f7af);FF(cc,d,a,bb,x[10],17,0xffff5bb1);FF(bb,cc,d,a,x[11],22,0x895cd7be);
-    FF(a,bb,cc,d,x[12],7,0x6b901122);FF(d,a,bb,cc,x[13],12,0xfd987193);FF(cc,d,a,bb,x[14],17,0xa679438e);FF(bb,cc,d,a,x[15],22,0x49b40821);
-    GG(a,bb,cc,d,x[1],5,0xf61e2562);GG(d,a,bb,cc,x[6],9,0xc040b340);GG(cc,d,a,bb,x[11],14,0x265e5a51);GG(bb,cc,d,a,x[0],20,0xe9b6c7aa);
-    GG(a,bb,cc,d,x[5],5,0xd62f105d);GG(d,a,bb,cc,x[10],9,0x2441453);GG(cc,d,a,bb,x[15],14,0xd8a1e681);GG(bb,cc,d,a,x[4],20,0xe7d3fbc8);
-    GG(a,bb,cc,d,x[9],5,0x21e1cde6);GG(d,a,bb,cc,x[14],9,0xc33707d6);GG(cc,d,a,bb,x[3],14,0xf4d50d87);GG(bb,cc,d,a,x[8],20,0x455a14ed);
-    GG(a,bb,cc,d,x[13],5,0xa9e3e905);GG(d,a,bb,cc,x[2],9,0xfcefa3f8);GG(cc,d,a,bb,x[7],14,0x676f02d9);GG(bb,cc,d,a,x[12],20,0x8d2a4c8a);
-    HH(a,bb,cc,d,x[5],4,0xfffa3942);HH(d,a,bb,cc,x[8],11,0x8771f681);HH(cc,d,a,bb,x[11],16,0x6d9d6122);HH(bb,cc,d,a,x[14],23,0xfde5380c);
-    HH(a,bb,cc,d,x[1],4,0xa4beea44);HH(d,a,bb,cc,x[4],11,0x4bdecfa9);HH(cc,d,a,bb,x[7],16,0xf6bb4b60);HH(bb,cc,d,a,x[10],23,0xbebfbc70);
-    HH(a,bb,cc,d,x[13],4,0x289b7ec6);HH(d,a,bb,cc,x[0],11,0xeaa127fa);HH(cc,d,a,bb,x[3],16,0xd4ef3085);HH(bb,cc,d,a,x[6],23,0x0481d05);
-    HH(a,bb,cc,d,x[9],4,0xd9d4d039);HH(d,a,bb,cc,x[12],11,0xe6db99e5);HH(cc,d,a,bb,x[15],16,0x1fa27cf8);HH(bb,cc,d,a,x[2],23,0xc4ac5665);
-    II(a,bb,cc,d,x[0],6,0xf4292244);II(d,a,bb,cc,x[7],10,0x432aff97);II(cc,d,a,bb,x[14],15,0xab9423a7);II(bb,cc,d,a,x[5],21,0xfc93a039);
-    II(a,bb,cc,d,x[12],6,0x655b59c3);II(d,a,bb,cc,x[3],10,0x8f0ccc92);II(cc,d,a,bb,x[10],15,0xffeff47d);II(bb,cc,d,a,x[1],21,0x85845dd1);
-    II(a,bb,cc,d,x[6],6,0x6fa87e4f);II(d,a,bb,cc,x[13],10,0xfe2ce6e0);II(cc,d,a,bb,x[4],15,0xa3014314);II(bb,cc,d,a,x[11],21,0x4e0811a1);
-    II(a,bb,cc,d,x[2],6,0xf7537e82);II(d,a,bb,cc,x[9],10,0xbd3af235);II(cc,d,a,bb,x[16],15,0x2ad7d2bb);II(bb,cc,d,a,x[7],21,0xeb86d391);
-    s[0]+=a;s[1]+=bb;s[2]+=cc;s[3]+=d;
-}
-static int CalcMD5(const char* in,char* out){
-    MD5_CTX c; unsigned char d[16];
-    MD5_Init(&c); MD5_Up(&c,in,(unsigned long)strlen(in)); MD5_Fin(d,&c);
-    for(int i=0;i<16;i++) sprintf(out+i*2,"%02x",d[i]); out[32]=0; return 0;
-}
+// ====== MD5（未使用）======
 
 // ====== HTTP GET ======
 static int HttpGet(const char* url,char* resp,int size){
@@ -178,7 +128,6 @@ static void KillGame(){
     CloseHandle(h);
 }
 // ====== 权限修复版 ======
-static void AddLog(const WCHAR* fmt, ...);
 static int LockACE(){
     
     
@@ -339,9 +288,6 @@ static void StartMon(){
 static void StopMon(){
     if(g_Running){InterlockedExchange(&g_Running,0);}
 }
-
-// 登录验证已移除
-
 
 
 // ====== 主窗口 ======
