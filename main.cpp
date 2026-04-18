@@ -39,6 +39,7 @@ static volatile LONG g_Running = 0;
 static HANDLE g_hMonThread = NULL;
 static WCHAR g_szLog[8192] = {0};
 static CRITICAL_SECTION g_csLog;
+static HWND g_hMainWnd = NULL;
 
 // ====== MD5（未使用）======
 
@@ -226,7 +227,7 @@ static unsigned __stdcall MonThrd(void* a){
         Sleep(500);
     }
     if(!g_Running){AddLog(L"【2/6】用户取消");_endthreadex(0);return 0;}
-    AddLog(L"【3/6】等待辅助加载中...");Sleep(10000);
+    AddLog(L"【3/6】等待辅助加载中...");Sleep(5000);
     AddLog(L"【4/6】过检测执行中...");
     if(LockACE() == 0){
         AddLog(L"【4/6】过检测执行成功!");
@@ -250,6 +251,9 @@ static unsigned __stdcall MonThrd(void* a){
     AddLog(L"=== Anti-cheat done! ===");
     InterlockedExchange(&g_Running,0);
     if(g_hBtnStart){EnableWindow(g_hBtnStart,1);SetWindowTextW(g_hBtnStart,L"开始过检测");}
+    AddLog(L"正在退出...");
+    Sleep(500);
+    if(g_hMainWnd) PostMessageW(g_hMainWnd, WM_CLOSE, 0, 0);
     Log("监控线程结束");
     _endthreadex(0);return 0;
 }
