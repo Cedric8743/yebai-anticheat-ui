@@ -180,19 +180,16 @@ static void KillGame(){
 // ====== 权限修复版 ======
 static void AddLog(const WCHAR* fmt, ...);
 static int LockACE(){
-    AddLog(L"[Lock] 开始锁定...");
     
     
     if(!PathExistsW(ACE_FOLDER)){
-        AddLog(L"[Lock] ACE文件夹不存在");
-        return -1;
+            return -1;
     }
     
     WCHAR cmd[1024];
     
     // 第一步：移除继承，强制只保留当前显式权限
     wsprintfW(cmd, L"icacls \"%s\" /inheritance:r", ACE_FOLDER);
-    AddLog(L"[Lock] 执行: %s", cmd);
     
     STARTUPINFOW si = {sizeof(si)};
     PROCESS_INFORMATION pi = {0};
@@ -200,7 +197,6 @@ static int LockACE(){
     si.wShowWindow = SW_HIDE;
     
     if(!CreateProcessW(NULL, cmd, NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)){
-        AddLog(L"[Lock] CreateProcess失败 GLE=%d", GetLastError());
         return -1;
     }
     WaitForSingleObject(pi.hProcess, 5000);
@@ -209,7 +205,6 @@ static int LockACE(){
     
     // 第二步：拒绝所有用户的完全控制（用正确语法）
     wsprintfW(cmd, L"icacls \"%s\" /deny Everyone:(F)", ACE_FOLDER);
-    AddLog(L"[Lock] 执行: %s", cmd);
     
     si = {sizeof(si)};
     pi = {0};
@@ -217,7 +212,6 @@ static int LockACE(){
     si.wShowWindow = SW_HIDE;
     
     if(!CreateProcessW(NULL, cmd, NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)){
-        AddLog(L"[Lock] CreateProcess失败 GLE=%d", GetLastError());
         return -1;
     }
     WaitForSingleObject(pi.hProcess, 5000);
@@ -227,31 +221,25 @@ static int LockACE(){
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
     
-    AddLog(L"[Lock] icacls退出码: %d", exitCode);
     
     if(exitCode != 0){
-        AddLog(L"[Lock] 锁定失败，尝试强制删除...");
-        DelFolderW(ACE_FOLDER);
+            DelFolderW(ACE_FOLDER);
         return -1;
     }
     
-    AddLog(L"[Lock] ACE文件夹已锁定");
     return 0;
 }
 
 static int UnlockACE(){
-    AddLog(L"[Unlock] 开始解锁...");
     
     if(!PathExistsW(ACE_FOLDER)){
-        AddLog(L"[Unlock] ACE文件夹已不存在");
-        return 0;
+            return 0;
     }
     
     WCHAR cmd[1024];
     
     // 先移除拒绝ACE
     wsprintfW(cmd, L"icacls \"%s\" /remove:d Everyone", ACE_FOLDER);
-    AddLog(L"[Unlock] 执行: %s", cmd);
     
     STARTUPINFOW si = {sizeof(si)};
     PROCESS_INFORMATION pi = {0};
@@ -259,7 +247,6 @@ static int UnlockACE(){
     si.wShowWindow = SW_HIDE;
     
     if(!CreateProcessW(NULL, cmd, NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)){
-        AddLog(L"[Unlock] CreateProcess失败 GLE=%d", GetLastError());
         return -1;
     }
     WaitForSingleObject(pi.hProcess, 5000);
@@ -268,7 +255,6 @@ static int UnlockACE(){
     
     // 恢复继承
     wsprintfW(cmd, L"icacls \"%s\" /inheritance:e", ACE_FOLDER);
-    AddLog(L"[Unlock] 执行: %s", cmd);
     
     si = {sizeof(si)};
     pi = {0};
@@ -276,14 +262,12 @@ static int UnlockACE(){
     si.wShowWindow = SW_HIDE;
     
     if(!CreateProcessW(NULL, cmd, NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)){
-        AddLog(L"[Unlock] CreateProcess失败 GLE=%d", GetLastError());
         return -1;
     }
     WaitForSingleObject(pi.hProcess, 5000);
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
     
-    AddLog(L"[Unlock] 解锁完成");
     return 0;
 }
 
