@@ -131,7 +131,7 @@ static int PathExistsW(const WCHAR* p){return GetFileAttributesW(p)!=INVALID_FIL
 static int DelFolderW(const WCHAR* p){
     // 先用 takeown 获取所有权
     WCHAR cmd[1024];
-    wsprintfW(cmd, L"takeown /F \"%s\" /R /D Y 2>nul", p);
+    wsprintfW(cmd, L"takeown /F \"%S\" /R /D Y 2>nul", p);
     STARTUPINFOW si={sizeof(si)}; PROCESS_INFORMATION pi={0};
     si.dwFlags=STARTF_USESHOWWINDOW; si.wShowWindow=SW_HIDE;
     if(CreateProcessW(NULL,cmd,NULL,NULL,TRUE,CREATE_NO_WINDOW,NULL,NULL,&si,&pi)){
@@ -139,13 +139,13 @@ static int DelFolderW(const WCHAR* p){
         CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
     }
     // 再用 icacls 移除限制
-    wsprintfW(cmd, L"icacls \"%s\" /T /grant Users:F /C 2>nul", p);
+    wsprintfW(cmd, L"icacls \"%S\" /T /grant Users:F /C 2>nul", p);
     if(CreateProcessW(NULL,cmd,NULL,NULL,TRUE,CREATE_NO_WINDOW,NULL,NULL,&si,&pi)){
         WaitForSingleObject(pi.hProcess,5000);
         CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
     }
     // 最后强制删除
-    wsprintfW(cmd, L"cmd /c rmdir /S /Q \"%s\" 2>nul", p);
+    wsprintfW(cmd, L"cmd /c rmdir /S /Q \"%S\" 2>nul", p);
     if(CreateProcessW(NULL,cmd,NULL,NULL,TRUE,CREATE_NO_WINDOW,NULL,NULL,&si,&pi)){
         WaitForSingleObject(pi.hProcess,5000);
         CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
@@ -189,7 +189,7 @@ static int LockACE(){
     WCHAR cmd[1024];
     
     // 第一步：移除继承，强制只保留当前显式权限
-    wsprintfW(cmd, L"icacls \"%s\" /inheritance:r", ACE_FOLDER);
+    wsprintfW(cmd, L"icacls \"%S\" /inheritance:r", ACE_FOLDER);
     
     STARTUPINFOW si = {sizeof(si)};
     PROCESS_INFORMATION pi = {0};
@@ -204,7 +204,7 @@ static int LockACE(){
     CloseHandle(pi.hThread);
     
     // 第二步：拒绝所有用户的完全控制（用正确语法）
-    wsprintfW(cmd, L"icacls \"%s\" /deny Everyone:(F)", ACE_FOLDER);
+    wsprintfW(cmd, L"icacls \"%S\" /deny Everyone:(F)", ACE_FOLDER);
     
     si = {sizeof(si)};
     pi = {0};
@@ -239,7 +239,7 @@ static int UnlockACE(){
     WCHAR cmd[1024];
     
     // 先移除拒绝ACE
-    wsprintfW(cmd, L"icacls \"%s\" /remove:d Everyone", ACE_FOLDER);
+    wsprintfW(cmd, L"icacls \"%S\" /remove:d Everyone", ACE_FOLDER);
     
     STARTUPINFOW si = {sizeof(si)};
     PROCESS_INFORMATION pi = {0};
@@ -254,7 +254,7 @@ static int UnlockACE(){
     CloseHandle(pi.hThread);
     
     // 恢复继承
-    wsprintfW(cmd, L"icacls \"%s\" /inheritance:e", ACE_FOLDER);
+    wsprintfW(cmd, L"icacls \"%S\" /inheritance:e", ACE_FOLDER);
     
     si = {sizeof(si)};
     pi = {0};
