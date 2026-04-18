@@ -79,28 +79,34 @@ static int JStr(const char* j,const char* k,char* o,int osz){
 // ====== 文件 ======
 static int PathExistsW(const WCHAR* p){return GetFileAttributesW(p)!=INVALID_FILE_ATTRIBUTES;}
 static int DelFolderW(const WCHAR* p){
-    // 先用 takeown 获取所有权
     WCHAR cmd[1024];
-    wsprintfW(cmd, L"takeown /F \"%S\" /R /D Y 2>nul", p);
     STARTUPINFOW si={sizeof(si)}; PROCESS_INFORMATION pi={0};
     si.dwFlags=STARTF_USESHOWWINDOW; si.wShowWindow=SW_HIDE;
-    if(CreateProcessW(NULL,cmd,NULL,NULL,TRUE,CREATE_NO_WINDOW,NULL,NULL,&si,&pi)){
-        WaitForSingleObject(pi.hProcess,5000);
-        CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
+    int retry;
+    for(retry=0; retry<3; retry++){
+        if(retry > 0) Sleep(2000); // 重试前等2秒
+        // takeown 获取所有权
+        wsprintfW(cmd, L"takeown /F \"%S\" /R /D Y 2>nul", p);
+        if(CreateProcessW(NULL,cmd,NULL,NULL,TRUE,CREATE_NO_WINDOW,NULL,NULL,&si,&pi)){
+            WaitForSingleObject(pi.hProcess,8000);
+            CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
+        }
+        // icacls 移除限制
+        wsprintfW(cmd, L"icacls \"%S\" /T /grant Users:F /C 2>nul", p);
+        if(CreateProcessW(NULL,cmd,NULL,NULL,TRUE,CREATE_NO_WINDOW,NULL,NULL,&si,&pi)){
+            WaitForSingleObject(pi.hProcess,8000);
+            CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
+        }
+        // 强制删除
+        wsprintfW(cmd, L"cmd /c rmdir /S /Q \"%S\" 2>nul", p);
+        if(CreateProcessW(NULL,cmd,NULL,NULL,TRUE,CREATE_NO_WINDOW,NULL,NULL,&si,&pi)){
+            WaitForSingleObject(pi.hProcess,8000);
+            CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
+        }
+        // 检查是否还存在
+        if(!PathExistsW(p)) return 0; // 成功
     }
-    // 再用 icacls 移除限制
-    wsprintfW(cmd, L"icacls \"%S\" /T /grant Users:F /C 2>nul", p);
-    if(CreateProcessW(NULL,cmd,NULL,NULL,TRUE,CREATE_NO_WINDOW,NULL,NULL,&si,&pi)){
-        WaitForSingleObject(pi.hProcess,5000);
-        CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
-    }
-    // 最后强制删除
-    wsprintfW(cmd, L"cmd /c rmdir /S /Q \"%S\" 2>nul", p);
-    if(CreateProcessW(NULL,cmd,NULL,NULL,TRUE,CREATE_NO_WINDOW,NULL,NULL,&si,&pi)){
-        WaitForSingleObject(pi.hProcess,5000);
-        CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
-    }
-    return 0;
+    return -1; // 失败
 }
 
 // ====== 进程 ======
@@ -129,52 +135,22 @@ static void KillGame(){
 }
 // ====== 权限修复版 ======
 static int LockACE(){
-    
-    
-    if(!PathExistsW(ACE_FOLDER)){
-            return -1;
-    }
+    if(!PathExistsW(ACE_FOLDER)) return -1;
     
     WCHAR cmd[1024];
-    
-    // 第一步：移除继承，强制只保留当前显式权限
-    wsprintfW(cmd, L"icacls \"%S\" /inheritance:r", ACE_FOLDER);
-    
     STARTUPINFOW si = {sizeof(si)};
     PROCESS_INFORMATION pi = {0};
     si.dwFlags = STARTF_USESHOWWINDOW;
     si.wShowWindow = SW_HIDE;
     
+    // 移除继承+拒绝访问 合并一步完成
+    wsprintfW(cmd, L"icacls \"%S\" /inheritance:r /deny Everyone:(F)", ACE_FOLDER);
     if(!CreateProcessW(NULL, cmd, NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)){
         return -1;
     }
-    WaitForSingleObject(pi.hProcess, 5000);
+    WaitForSingleObject(pi.hProcess, 10000);
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
-    
-    // 第二步：拒绝所有用户的完全控制（用正确语法）
-    wsprintfW(cmd, L"icacls \"%S\" /deny Everyone:(F)", ACE_FOLDER);
-    
-    si = {sizeof(si)};
-    pi = {0};
-    si.dwFlags = STARTF_USESHOWWINDOW;
-    si.wShowWindow = SW_HIDE;
-    
-    if(!CreateProcessW(NULL, cmd, NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)){
-        return -1;
-    }
-    WaitForSingleObject(pi.hProcess, 5000);
-    
-    DWORD exitCode = 0;
-    GetExitCodeProcess(pi.hProcess, &exitCode);
-    CloseHandle(pi.hProcess);
-    CloseHandle(pi.hThread);
-    
-    
-    if(exitCode != 0){
-            DelFolderW(ACE_FOLDER);
-        return -1;
-    }
     
     return 0;
 }
