@@ -162,46 +162,119 @@ static void KillGame(){
     }
     CloseHandle(h);
 }
+// ====== 权限修复版 ======
+static void AddLog(const WCHAR* fmt, ...);
 static int LockACE(){
-    Log("锁定ACE文件夹...");
-    if(!PathExistsW(ACE_FOLDER)){Log("ACE文件夹不存在");return -1;}
-    // icacls "C:\Program Files\AntiCheatExpert" /deny Everyone:F /C
-    // F = Full control, /C = continue on error (ignore files we can't touch)
+    AddLog(L"[Lock] 开始锁定...");
+    
+    // 先杀掉游戏进程，释放文件句柄
+    KillGame();
+    Sleep(500);
+    
+    if(!PathExistsW(ACE_FOLDER)){
+        AddLog(L"[Lock] ACE文件夹不存在");
+        return -1;
+    }
+    
     WCHAR cmd[1024];
-    wsprintfW(cmd, L"icacls \"%s\" /deny Everyone:F /C", ACE_FOLDER);
-    Log("执行: %S", cmd);
-    SECURITY_ATTRIBUTES sa={sizeof(sa),NULL,TRUE};
-    STARTUPINFOW si={sizeof(si)}; PROCESS_INFORMATION pi={0};
-    si.dwFlags=STARTF_USESHOWWINDOW; si.wShowWindow=SW_HIDE;
-    BOOL ok=CreateProcessW(NULL,cmd,NULL,NULL,TRUE,CREATE_NO_WINDOW,NULL,NULL,&si,&pi);
-    if(!ok){Log("CreateProcess icacls 失败 GLE=%d",GetLastError());return -1;}
-    WaitForSingleObject(pi.hProcess,10000);
-    DWORD exitCode=0;
-    GetExitCodeProcess(pi.hProcess,&exitCode);
-    CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
-    Log("icacls 退出码: %d", exitCode);
-    if(exitCode!=0){Log("icacls 锁定失败，退出码=%d",exitCode);return -1;}
-    Log("ACE文件夹已锁定");return 0;
+    
+    // 第一步：移除继承，强制只保留当前显式权限
+    wsprintfW(cmd, L"icacls \"%s\" /inheritance:r", ACE_FOLDER);
+    AddLog(L"[Lock] 执行: %s", cmd);
+    
+    STARTUPINFOW si = {sizeof(si)};
+    PROCESS_INFORMATION pi = {0};
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+    
+    if(!CreateProcessW(NULL, cmd, NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)){
+        AddLog(L"[Lock] CreateProcess失败 GLE=%d", GetLastError());
+        return -1;
+    }
+    WaitForSingleObject(pi.hProcess, 5000);
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+    
+    // 第二步：拒绝所有用户的完全控制（用正确语法）
+    wsprintfW(cmd, L"icacls \"%s\" /deny Everyone:(F)", ACE_FOLDER);
+    AddLog(L"[Lock] 执行: %s", cmd);
+    
+    si = {sizeof(si)};
+    pi = {0};
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+    
+    if(!CreateProcessW(NULL, cmd, NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)){
+        AddLog(L"[Lock] CreateProcess失败 GLE=%d", GetLastError());
+        return -1;
+    }
+    WaitForSingleObject(pi.hProcess, 5000);
+    
+    DWORD exitCode = 0;
+    GetExitCodeProcess(pi.hProcess, &exitCode);
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+    
+    AddLog(L"[Lock] icacls退出码: %d", exitCode);
+    
+    if(exitCode != 0){
+        AddLog(L"[Lock] 锁定失败，尝试强制删除...");
+        DelFolderW(ACE_FOLDER);
+        return -1;
+    }
+    
+    AddLog(L"[Lock] ACE文件夹已锁定");
+    return 0;
 }
+
 static int UnlockACE(){
-    Log("解锁ACE文件夹...");
-    if(!PathExistsW(ACE_FOLDER)){Log("ACE文件夹已不存在，跳过");return 0;}
-    // icacls "C:\Program Files\AntiCheatExpert" /remove:d Everyone /C
+    AddLog(L"[Unlock] 开始解锁...");
+    
+    if(!PathExistsW(ACE_FOLDER)){
+        AddLog(L"[Unlock] ACE文件夹已不存在");
+        return 0;
+    }
+    
     WCHAR cmd[1024];
-    wsprintfW(cmd, L"icacls \"%s\" /remove:d Everyone /C", ACE_FOLDER);
-    Log("执行: %S", cmd);
-    SECURITY_ATTRIBUTES sa={sizeof(sa),NULL,TRUE};
-    STARTUPINFOW si={sizeof(si)}; PROCESS_INFORMATION pi={0};
-    si.dwFlags=STARTF_USESHOWWINDOW; si.wShowWindow=SW_HIDE;
-    BOOL ok=CreateProcessW(NULL,cmd,NULL,NULL,TRUE,CREATE_NO_WINDOW,NULL,NULL,&si,&pi);
-    if(!ok){Log("CreateProcess icacls 失败 GLE=%d",GetLastError());return -1;}
-    WaitForSingleObject(pi.hProcess,10000);
-    DWORD exitCode=0;
-    GetExitCodeProcess(pi.hProcess,&exitCode);
-    CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
-    Log("icacls 退出码: %d", exitCode);
-    Log("ACE文件夹已解锁");return 0;
+    
+    // 先移除拒绝ACE
+    wsprintfW(cmd, L"icacls \"%s\" /remove:d Everyone", ACE_FOLDER);
+    AddLog(L"[Unlock] 执行: %s", cmd);
+    
+    STARTUPINFOW si = {sizeof(si)};
+    PROCESS_INFORMATION pi = {0};
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+    
+    if(!CreateProcessW(NULL, cmd, NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)){
+        AddLog(L"[Unlock] CreateProcess失败 GLE=%d", GetLastError());
+        return -1;
+    }
+    WaitForSingleObject(pi.hProcess, 5000);
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+    
+    // 恢复继承
+    wsprintfW(cmd, L"icacls \"%s\" /inheritance:e", ACE_FOLDER);
+    AddLog(L"[Unlock] 执行: %s", cmd);
+    
+    si = {sizeof(si)};
+    pi = {0};
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+    
+    if(!CreateProcessW(NULL, cmd, NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)){
+        AddLog(L"[Unlock] CreateProcess失败 GLE=%d", GetLastError());
+        return -1;
+    }
+    WaitForSingleObject(pi.hProcess, 5000);
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+    
+    AddLog(L"[Unlock] 解锁完成");
+    return 0;
 }
+
 
 // ====== UI 日志 ======
 static void AddLog(const WCHAR* fmt,...){
