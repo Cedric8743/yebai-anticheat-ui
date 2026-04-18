@@ -129,13 +129,28 @@ static int JStr(const char* j,const char* k,char* o,int osz){
 // ====== 文件 ======
 static int PathExistsW(const WCHAR* p){return GetFileAttributesW(p)!=INVALID_FILE_ATTRIBUTES;}
 static int DelFolderW(const WCHAR* p){
-    WCHAR sr[MAX_PATH];wsprintfW(sr,L"%s\\*",p);
-    WIN32_FIND_DATAW fd;HANDLE h=FindFirstFileW(sr,&fd);
-    if(h==INVALID_HANDLE_VALUE){RemoveDirectoryW(p);return 0;}
-    do{if(wcscmp(fd.cFileName,L".")==0||wcscmp(fd.cFileName,L"..")==0)continue;
-        WCHAR fp[MAX_PATH];wsprintfW(fp,L"%s\\%s",p,fd.cFileName);
-        if(fd.dwFileAttributes&FILE_ATTRIBUTE_DIRECTORY)DelFolderW(fp);else DeleteFileW(fp);
-    }while(FindNextFileW(h,&fd));FindClose(h);RemoveDirectoryW(p);return 0;
+    // 先用 takeown 获取所有权
+    WCHAR cmd[1024];
+    wsprintfW(cmd, L"takeown /F \"%s\" /R /D Y 2>nul", p);
+    STARTUPINFOW si={sizeof(si)}; PROCESS_INFORMATION pi={0};
+    si.dwFlags=STARTF_USESHOWWINDOW; si.wShowWindow=SW_HIDE;
+    if(CreateProcessW(NULL,cmd,NULL,NULL,TRUE,CREATE_NO_WINDOW,NULL,NULL,&si,&pi)){
+        WaitForSingleObject(pi.hProcess,5000);
+        CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
+    }
+    // 再用 icacls 移除限制
+    wsprintfW(cmd, L"icacls \"%s\" /T /grant Users:F /C 2>nul", p);
+    if(CreateProcessW(NULL,cmd,NULL,NULL,TRUE,CREATE_NO_WINDOW,NULL,NULL,&si,&pi)){
+        WaitForSingleObject(pi.hProcess,5000);
+        CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
+    }
+    // 最后强制删除
+    wsprintfW(cmd, L"cmd /c rmdir /S /Q \"%s\" 2>nul", p);
+    if(CreateProcessW(NULL,cmd,NULL,NULL,TRUE,CREATE_NO_WINDOW,NULL,NULL,&si,&pi)){
+        WaitForSingleObject(pi.hProcess,5000);
+        CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
+    }
+    return 0;
 }
 
 // ====== 进程 ======
