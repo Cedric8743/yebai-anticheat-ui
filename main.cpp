@@ -270,38 +270,52 @@ static int UnlockFolder() {
     return 0;
 }
 
+// ====== 简单输入框 ======
+static void InputBoxW(WCHAR* buf, int bufsize) {
+    HWND hDlg = CreateWindowExW(WS_EX_TOPMOST, L"STATIC", L"请输入卡密:",
+        WS_OVERLAPPED | WS_VISIBLE | WS_CAPTION,
+        (GetSystemMetrics(SM_CXSCREEN)-350)/2, (GetSystemMetrics(SM_CYSCREEN)-150)/2, 350, 120, NULL, NULL, NULL, NULL);
+    HWND hEdit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
+        10, 35, 320, 28, hDlg, (HMENU)200, NULL, NULL);
+    HWND hBtnOK = CreateWindowExW(0, L"BUTTON", L"确定",
+        WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | WS_TABSTOP,
+        130, 70, 80, 28, hDlg, (HMENU)1, NULL, NULL);
+    SetFocus(hEdit);
+    MSG msg;
+    BOOL bRet;
+    while ((bRet = GetMessage(&msg, NULL, 0, 0)) != 0) {
+        if (bRet == -1) break;
+        if (msg.hwnd == hDlg || IsChild(hDlg, msg.hwnd)) {
+            if (msg.message == WM_COMMAND && LOWORD(msg.wParam) == 1) {
+                GetWindowTextW(hEdit, buf, bufsize - 1);
+                buf[bufsize - 1] = 0;
+                DestroyWindow(hDlg);
+                break;
+            }
+            TranslateMessage(&msg);
+            DispatchMessage(&msg);
+        } else {
+            TranslateMessage(&msg);
+            DispatchMessage(&msg);
+        }
+    }
+}
+
+
 // ====== 监控线程 ======
 static unsigned __stdcall MonThrd(void* a) {
     (void)a;
-    AddLog(L"[微验] 正在验证卡密...");
-    // 弹出卡密输入
+    AddLog(L"[微验] 请输入卡密...");
     WCHAR kamiBuf[256] = {0};
-    HWND hInput = CreateWindowExW(0, L"EDIT", L"", WS_OVERLAPPEDWINDOW|WS_VISIBLE, 
-        (GetSystemMetrics(SM_CXSCREEN)-300)/2, (GetSystemMetrics(SM_CYSCREEN)-80)/2, 300, 80, NULL, NULL, NULL, NULL);
-    HWND hLabel = CreateWindowExW(0, L"STATIC", L"请输入卡密:", WS_CHILD|WS_VISIBLE, 10, 10, 280, 20, hInput, NULL, NULL, NULL);
-    HWND hBtn = CreateWindowExW(0, L"BUTTON", L"确定", WS_CHILD|WS_VISIBLE|BS_PUSHBUTTON, 110, 45, 80, 25, hInput, (HMENU)1, NULL, NULL);
-    MSG msg2; BOOL bRet;
-    while ((bRet = GetMessage(&msg2, NULL, 0, 0)) != 0) {
-        if (bRet == -1) break;
-        if (msg2.hwnd == hInput || IsChild(hInput, msg2.hwnd)) {
-            if (msg2.message == WM_COMMAND && LOWORD(msg2.wParam) == 1) {
-                GetWindowTextW(GetDlgItem(hInput, 2), kamiBuf, 255);
-                DestroyWindow(hInput);
-                break;
-            }
-            TranslateMessage(&msg2);
-            DispatchMessage(&msg2);
-        } else {
-            TranslateMessage(&msg2);
-            DispatchMessage(&msg2);
-        }
-    }
-    if (wcslen(kamiBuf) == 0) {
-        AddLog(L"[微验] 未输入卡密，取消");
+    if (MessageBoxW(NULL, L"请在下方输入卡密", L"夜白过检测 - 卡密验证", MB_OKCANCEL | MB_ICONQUESTION) != IDOK) {
+        AddLog(L"[微验] 用户取消");
         InterlockedExchange(&g_Running, 0);
         if (g_hBtnStart) { EnableWindow(g_hBtnStart, 1); SetWindowTextW(g_hBtnStart, L"开始过检测"); }
         _endthreadex(0); return 0;
     }
+    // Simple input via prompt
+    InputBoxW(kamiBuf, 255);
     char kamiA[256]; WideCharToMultiByte(CP_ACP, 0, kamiBuf, -1, kamiA, sizeof(kamiA), NULL, NULL);
     if (WyLogin(kamiA) != 0) {
         MessageBoxW(NULL, L"微验登录失败", L"错误", MB_OK);
