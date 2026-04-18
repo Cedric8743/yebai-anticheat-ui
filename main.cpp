@@ -142,15 +142,12 @@ static int LockFolder() {
 // ====== 解锁文件夹权限 =======
 static int UnlockFolder() {
     WCHAR cmd[1024];
-    // 先获取所有权
+    // 先用 takeown 强制获取管理员所有权
     wsprintfW(cmd, L"takeown /F \"C:\\Program Files\\AntiCheatExpert\" /R /D Y 2>nul");
-    RunCmd(cmd, 8000);
-    // 移除拒绝ACE
-    wsprintfW(cmd, L"icacls \"C:\\Program Files\\AntiCheatExpert\" /T /remove:d Everyone 2>nul");
-    RunCmd(cmd, 8000);
-    // 恢复继承
-    wsprintfW(cmd, L"icacls \"C:\\Program Files\\AntiCheatExpert\" /T /inheritance:e 2>nul");
-    RunCmd(cmd, 8000);
+    RunCmd(cmd, 10000);
+    // 重置所有安全属性，给管理员完全控制
+    wsprintfW(cmd, L"icacls \"C:\\Program Files\\AntiCheatExpert\" /T /reset /C 2>nul");
+    RunCmd(cmd, 10000);
     return 0;
 }
 
